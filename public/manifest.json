@@ -1,6 +1,6 @@
 {
-  "name": "M-Pesa Budgeter",
-  "short_name": "Budgeter",
+  "name": "FinMan",
+  "short_name": "FinMan",
   "description": "Privacy-first M-Pesa transaction tracker.",
   "start_url": "/",
   "display": "standalone",

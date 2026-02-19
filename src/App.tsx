@@ -258,7 +258,7 @@ export default function App() {
             <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
               <Wallet size={40} />
             </div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">M-Pesa Budgeter</h1>
+            <h1 className="text-3xl font-bold text-slate-900 mb-2">FinMan</h1>
             <p className="text-slate-500">Secure, cloud-authenticated tracking.</p>
           </div>
           
