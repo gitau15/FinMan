@@ -17,7 +17,10 @@ import {
   PieChart as PieChartIcon,
   Mail,
   Lock,
-  Banknote
+  Banknote,
+  Zap,
+  Repeat,
+  AlertCircle
 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Calendar from 'react-calendar';
@@ -34,12 +37,13 @@ import {
   PieChart,
   Pie
 } from 'recharts';
-import { format, isSameDay, startOfMonth, endOfMonth, subMonths } from 'date-fns';
+import { format, isSameDay, startOfMonth, endOfMonth, subMonths, differenceInDays, isSameMonth } from 'date-fns';
 
 import { db, initializeCategories, type Transaction, type Category } from './db';
 import { parseMpesaSMS } from './utils/smsParser';
 import { cn, formatCurrency } from './utils/utils';
 import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { detectRecurringBills, calculateSpendingVelocity } from './services/analyticsService';
 
 // --- Components ---
 
@@ -109,7 +113,7 @@ const TransactionItem = ({ transaction, category }: { transaction: Transaction, 
 // --- Main App ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'income' | 'calendar' | 'profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'income' | 'expenses' | 'calendar' | 'profile'>('dashboard');
   const [session, setSession] = useState<any>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -123,6 +127,44 @@ export default function App() {
   // Data fetching
   const transactions = useLiveQuery(() => db.transactions.orderBy('date').reverse().toArray());
   const categories = useLiveQuery(() => db.categories.toArray());
+
+  // Analytics
+  const recurringBills = useMemo(() => transactions ? detectRecurringBills(transactions) : [], [transactions]);
+  const velocity = useMemo(() => {
+    if (!transactions) return null;
+    // Assume a default monthly budget of 30,000 if not set
+    const currentBalance = transactions[0]?.balance || 0;
+    return calculateSpendingVelocity(transactions, 30000, currentBalance);
+  }, [transactions]);
+
+  const expenseStats = useMemo(() => {
+    if (!transactions || !categories) return [];
+    const now = new Date();
+    const monthlyExpenses = transactions.filter(t => 
+      t.type !== 'receive' && isSameMonth(t.date, now)
+    );
+    
+    const stats = categories.map(cat => {
+      const total = monthlyExpenses
+        .filter(t => t.categoryId === cat.id)
+        .reduce((sum, t) => sum + t.amount, 0);
+      return { name: cat.name, value: total, color: cat.color, id: cat.id };
+    }).filter(c => c.value > 0);
+
+    const uncategorizedTotal = monthlyExpenses
+      .filter(t => !t.categoryId)
+      .reduce((sum, t) => sum + t.amount, 0);
+    
+    if (uncategorizedTotal > 0) {
+      stats.push({ name: 'Uncategorized', value: uncategorizedTotal, color: '#cbd5e1', id: 'none' });
+    }
+
+    return stats;
+  }, [transactions, categories]);
+
+  const totalMonthlyExpenses = useMemo(() => {
+    return expenseStats.reduce((sum, s) => sum + s.value, 0);
+  }, [expenseStats]);
 
   useEffect(() => {
     initializeCategories();
@@ -388,6 +430,78 @@ export default function App() {
                 </div>
               </Card>
 
+              {/* Spending Velocity Speedometer */}
+              {velocity && (
+                <Card className="overflow-hidden p-0 border-none shadow-lg">
+                  <div className={`p-5 flex items-center justify-between ${
+                    velocity.status === 'over' ? 'bg-rose-50' : 
+                    velocity.status === 'under' ? 'bg-emerald-50' : 'bg-blue-50'
+                  }`}>
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ${
+                        velocity.status === 'over' ? 'bg-rose-500 text-white' : 
+                        velocity.status === 'under' ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'
+                      }`}>
+                        <Zap size={24} />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800">Spending Velocity</h4>
+                        <p className="text-xs text-slate-500">
+                          {velocity.status === 'over' ? 'Spending too fast' : 
+                           velocity.status === 'under' ? 'Well under budget' : 'On track for the month'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-2xl font-black ${
+                        velocity.status === 'over' ? 'text-rose-600' : 
+                        velocity.status === 'under' ? 'text-emerald-600' : 'text-blue-600'
+                      }`}>
+                        {(velocity.velocityRatio * 100).toFixed(0)}%
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Burn Rate</p>
+                    </div>
+                  </div>
+                  <div className="p-4 bg-white grid grid-cols-2 gap-4 border-t border-slate-100">
+                    <div>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Daily Burn</p>
+                      <p className="font-bold text-slate-700">{formatCurrency(velocity.dailyBurnRate)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Projected End</p>
+                      <p className={`font-bold ${velocity.projectedEndBalance < 0 ? 'text-rose-500' : 'text-slate-700'}`}>
+                        {formatCurrency(velocity.projectedEndBalance)}
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* Recurring Bills */}
+              {recurringBills.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                      <Repeat size={18} className="text-blue-500" />
+                      Expected Bills
+                    </h4>
+                    <span className="text-[10px] font-bold bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full uppercase">Heuristic Engine</span>
+                  </div>
+                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                    {recurringBills.map((bill, idx) => (
+                      <Card key={idx} className="min-w-[160px] p-4 flex-shrink-0 border-slate-100">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase mb-1 truncate">{bill.merchant}</p>
+                        <p className="font-bold text-slate-800 mb-2">{formatCurrency(bill.amount)}</p>
+                        <div className="flex items-center gap-1 text-[10px] text-blue-600 font-bold">
+                          <AlertCircle size={10} />
+                          In {differenceInDays(bill.nextExpectedDate, new Date())} days
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Chart */}
               <Card>
                 <div className="flex items-center justify-between mb-6">
@@ -609,6 +723,108 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'expenses' && (
+            <motion.div 
+              key="expenses"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-6"
+            >
+              <Card className="bg-rose-600 text-white border-none shadow-rose-200 shadow-xl overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-4 opacity-10">
+                  <TrendingDown size={120} />
+                </div>
+                <div className="relative z-10">
+                  <p className="text-rose-100 text-sm font-medium mb-1">Monthly Expenses</p>
+                  <h3 className="text-4xl font-bold mb-2">{formatCurrency(totalMonthlyExpenses)}</h3>
+                  <p className="text-rose-100 text-xs opacity-80">Breakdown by Category</p>
+                </div>
+              </Card>
+
+              {expenseStats.length > 0 ? (
+                <>
+                  <Card className="bg-white border-none shadow-lg">
+                    <h4 className="font-bold text-slate-800 mb-4">Spending by Category</h4>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={expenseStats}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={80}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {expenseStats.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value: number) => formatCurrency(value)}
+                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="space-y-3 mt-4">
+                      {expenseStats.map((stat, idx) => (
+                        <div key={idx} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: stat.color }} />
+                            <span className="text-sm font-medium text-slate-600">{stat.name}</span>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-slate-800">{formatCurrency(stat.value)}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                              {((stat.value / totalMonthlyExpenses) * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+
+                  <div className="space-y-4">
+                    <h4 className="font-bold text-slate-800">Categorize Transactions</h4>
+                    <div className="space-y-2">
+                      {transactions?.filter(t => t.type !== 'receive' && isSameMonth(t.date, new Date())).map(t => (
+                        <div key={t.id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h5 className="font-bold text-slate-800 truncate">{t.merchant}</h5>
+                            <p className="text-xs text-slate-400">{format(t.date, 'MMM d, h:mm a')}</p>
+                            <p className="text-sm font-black text-rose-600 mt-1">{formatCurrency(t.amount)}</p>
+                          </div>
+                          <select 
+                            className="bg-slate-50 border-none rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500"
+                            value={t.categoryId || ''}
+                            onChange={async (e) => {
+                              const catId = e.target.value;
+                              await db.transactions.update(t.id!, { categoryId: catId || undefined });
+                            }}
+                          >
+                            <option value="">Uncategorized</option>
+                            {categories?.map(cat => (
+                              <option key={cat.id} value={cat.id}>{cat.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-20 text-slate-400">
+                  <PieChartIcon size={64} className="mx-auto mb-4 opacity-20" />
+                  <p className="font-bold">No expenses found for this month.</p>
+                  <p className="text-xs mt-1">Add some transactions to see the breakdown.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
           {activeTab === 'calendar' && (
             <motion.div 
               key="calendar"
@@ -738,6 +954,12 @@ export default function App() {
           icon={Banknote} 
           label="Income" 
           onClick={() => setActiveTab('income')} 
+        />
+        <TabButton 
+          active={activeTab === 'expenses'} 
+          icon={TrendingDown} 
+          label="Expenses" 
+          onClick={() => setActiveTab('expenses')} 
         />
         <TabButton 
           active={activeTab === 'calendar'} 
