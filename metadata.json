@@ -1,0 +1,5 @@
+{
+  "name": "FinMan",
+  "description": "A privacy-first, local-only M-Pesa transaction tracker and budget manager.",
+  "requestFramePermissions": []
+}

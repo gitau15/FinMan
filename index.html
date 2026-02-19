@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>M-Pesa Budgeter</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#10b981" />
+    <script>
+      // Defensive check to prevent libraries from trying to overwrite read-only fetch
+      (function() {
+        try {
+          const descriptor = Object.getOwnPropertyDescriptor(window, 'fetch');
+          if (descriptor && !descriptor.writable && !descriptor.set && descriptor.configurable) {
+            const originalFetch = window.fetch;
+            Object.defineProperty(window, 'fetch', {
+              writable: true,
+              configurable: true,
+              enumerable: true,
+              value: originalFetch
+            });
+          }
+        } catch (e) {
+          console.warn('M-Pesa Budgeter: Could not redefine fetch property', e);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js');
+        });
+      }
+    </script>
+  </body>
+</html>
+
